@@ -1,6 +1,6 @@
 self.addEventListener('install', (e) => {
   e.waitUntil(
-    caches.open('catering-store').then((cache) => cache.addAll([
+    caches.open('catering-store-v2').then((cache) => cache.addAll([
       '/',
       '/index.html',
       '/manifest.json',
