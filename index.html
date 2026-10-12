@@ -77,7 +77,7 @@
 
         .settings-btn:active { transform: scale(0.9); }
 
-        .month-title { 
+        .period-title { 
             font-size: 1rem; 
             color: var(--secondary-text); 
             font-weight: 600;
@@ -93,10 +93,35 @@
             letter-spacing: -1px;
         }
 
+        .pay-status-btn {
+            display: inline-block;
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 700;
+            border: none;
+            cursor: pointer;
+            margin-top: 4px;
+            transition: transform 0.1s, background 0.2s;
+        }
+
+        .pay-status-btn:active { transform: scale(0.95); }
+
+        .status-unpaid {
+            background: rgba(255, 59, 48, 0.12);
+            color: var(--danger);
+        }
+
+        .status-paid {
+            background: rgba(52, 199, 89, 0.15);
+            color: var(--accent-green-dark);
+        }
+
         .total-count {
             color: var(--secondary-text);
             font-size: 0.95rem;
             font-weight: 500;
+            margin-top: 6px;
         }
 
         .big-btn { 
@@ -173,7 +198,7 @@
             margin-bottom: 12px; 
         }
 
-        input { 
+        input, select { 
             width: 100%; 
             padding: 14px 16px; 
             border: 1.5px solid var(--border-color); 
@@ -184,7 +209,7 @@
             transition: border-color 0.2s, background 0.2s;
         }
 
-        input:focus {
+        input:focus, select:focus {
             outline: none;
             border-color: var(--accent-blue);
             background: var(--card-bg);
@@ -290,8 +315,11 @@
 
     <div class="header" style="margin-bottom: 24px;">
         <button class="settings-btn" onclick="openSettings()" title="Settings">⚙️</button>
-        <div class="month-title" id="displayMonth">Loading...</div>
+        <div class="period-title" id="displayPeriod">Loading...</div>
         <div class="total-bill" id="displayTotal">Rp 0</div>
+        <div>
+            <button class="pay-status-btn status-unpaid" id="payStatusBtn" onclick="togglePaymentStatus()">UNPAID ✕</button>
+        </div>
         <div class="total-count" id="displayCount">(0 deliveries)</div>
     </div>
 
@@ -322,18 +350,41 @@
     <div class="modal" id="settingsModal">
         <div class="modal-content">
             <div class="modal-title">Settings</div>
+            
             <label style="display:block; margin-bottom:6px; font-weight:600; font-size:0.9rem;">Catering Company Name</label>
-            <input type="text" id="setCompany" style="margin-bottom:20px;">
+            <input type="text" id="setCompany" style="margin-bottom:16px;">
+            
             <label style="display:block; margin-bottom:6px; font-weight:600; font-size:0.9rem;">Default Price (Rp)</label>
-            <input type="number" id="setPrice" style="margin-bottom:24px;">
+            <input type="number" id="setPrice" style="margin-bottom:16px;">
+
+            <label style="display:block; margin-bottom:6px; font-weight:600; font-size:0.9rem;">Billing Cycle</label>
+            <select id="setCycle" onchange="toggleStartDayVisibility()" style="margin-bottom:16px;">
+                <option value="monthly">Monthly</option>
+                <option value="weekly">Weekly</option>
+            </select>
+
+            <div id="startDayGroup" style="display:none; margin-bottom:24px;">
+                <label style="display:block; margin-bottom:6px; font-weight:600; font-size:0.9rem;">Weekly Start Day</label>
+                <select id="setStartDay">
+                    <option value="1">Monday</option>
+                    <option value="2">Tuesday</option>
+                    <option value="3">Wednesday</option>
+                    <option value="4">Thursday</option>
+                    <option value="5">Friday</option>
+                    <option value="6">Saturday</option>
+                    <option value="0">Sunday</option>
+                </select>
+            </div>
+
             <button class="btn-submit" onclick="saveSettings()">Save Settings</button>
             <button class="close-btn" onclick="closeSettings()">Cancel</button>
         </div>
     </div>
 
     <script>
-        let settings = JSON.parse(localStorage.getItem('catering_settings')) || { defaultCaterer: "Sari Rasa", defaultPrice: 35000 };
+        let settings = JSON.parse(localStorage.getItem('catering_settings')) || { defaultCaterer: "Sari Rasa", defaultPrice: 35000, cycle: "monthly", startDay: 1 };
         let logs = JSON.parse(localStorage.getItem('catering_logs')) || [];
+        let paymentRecords = JSON.parse(localStorage.getItem('catering_payments')) || {};
 
         function formatCurrency(amount) {
             return "Rp " + parseInt(amount).toLocaleString('id-ID');
@@ -354,20 +405,59 @@
             return `${year}-${month}-${day}`;
         }
 
+        function getCustomWeekDetails(dateObj, startDayIndex) {
+            const d = new Date(dateObj);
+            d.setMinutes(d.getMinutes() + d.getTimezoneOffset());
+            d.setHours(0, 0, 0, 0);
+
+            const currentDay = d.getDay(); // 0 = Sun, 1 = Mon ...
+            let diff = currentDay - startDayIndex;
+            if (diff < 0) diff += 7;
+
+            const startDate = new Date(d);
+            startDate.setDate(d.getDate() - diff);
+
+            const endDate = new Date(startDate);
+            endDate.setDate(startDate.getDate() + 6);
+            endDate.setHours(23, 59, 59, 999);
+
+            const year = startDate.getFullYear();
+            const month = String(startDate.getMonth() + 1).padStart(2, '0');
+            const day = String(startDate.getDate()).padStart(2, '0');
+            const periodKey = `W-${year}-${month}-${day}`;
+            
+            const periodLabel = `${startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+
+            return { startDate, endDate, periodKey, periodLabel };
+        }
+
+        function getCurrentPeriodInfo() {
+            const now = new Date();
+            if (settings.cycle === 'weekly') {
+                const targetStartDay = settings.startDay !== undefined ? Number(settings.startDay) : 1;
+                return getCustomWeekDetails(now, targetStartDay);
+            } else {
+                const year = now.getFullYear();
+                const month = String(now.getMonth() + 1).padStart(2, '0');
+                return {
+                    periodKey: `${year}-${month}`,
+                    periodLabel: now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+                };
+            }
+        }
+
         function updateUI() {
             const now = new Date();
-            const currentMonth = now.getMonth();
-            const currentYear = now.getFullYear();
             const todayStr = getTodayString();
+            const periodInfo = getCurrentPeriodInfo();
             
-            document.getElementById('displayMonth').innerText = now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-            
+            document.getElementById('displayPeriod').innerText = periodInfo.periodLabel;
             document.getElementById('pastDate').value = todayStr;
             document.getElementById('pastPrice').value = settings.defaultPrice;
 
+            // Handle Main Button
             const bigBtn = document.getElementById('mainLogBtn');
             const extraBtn = document.getElementById('extraTodayBtn');
-
             const hasLoggedToday = logs.some(log => log.date === todayStr);
 
             if(hasLoggedToday) {
@@ -380,27 +470,53 @@
                 extraBtn.style.display = "none";
             }
 
-            const thisMonthLogs = logs.filter(log => {
-                const logDate = new Date(log.date);
-                logDate.setMinutes(logDate.getMinutes() + logDate.getTimezoneOffset());
-                return logDate.getMonth() === currentMonth && logDate.getFullYear() === currentYear;
-            }).sort((a, b) => new Date(b.date) - new Date(a.date));
+            // Filter Logs for Current Cycle
+            let currentLogs = [];
+            if (settings.cycle === 'weekly') {
+                currentLogs = logs.filter(log => {
+                    const lDate = new Date(log.date);
+                    lDate.setMinutes(lDate.getMinutes() + lDate.getTimezoneOffset());
+                    return lDate >= periodInfo.startDate && lDate <= periodInfo.endDate;
+                });
+            } else {
+                const currentMonth = now.getMonth();
+                const currentYear = now.getFullYear();
+                currentLogs = logs.filter(log => {
+                    const lDate = new Date(log.date);
+                    lDate.setMinutes(lDate.getMinutes() + lDate.getTimezoneOffset());
+                    return lDate.getMonth() === currentMonth && lDate.getFullYear() === currentYear;
+                });
+            }
 
-            const total = thisMonthLogs.reduce((sum, log) => sum + Number(log.price), 0);
+            currentLogs.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+            // Calculate Totals
+            const total = currentLogs.reduce((sum, log) => sum + Number(log.price), 0);
             document.getElementById('displayTotal').innerText = formatCurrency(total);
-            document.getElementById('displayCount').innerText = `${thisMonthLogs.length} deliveries this month`;
+            document.getElementById('displayCount').innerText = `${currentLogs.length} deliveries this ${settings.cycle === 'weekly' ? 'week' : 'month'}`;
 
+            // Payment Status Button Update
+            const isPaid = paymentRecords[periodInfo.periodKey] || false;
+            const statusBtn = document.getElementById('payStatusBtn');
+            if (isPaid) {
+                statusBtn.innerText = "PAID ✓";
+                statusBtn.className = "pay-status-btn status-paid";
+            } else {
+                statusBtn.innerText = "UNPAID ✕";
+                statusBtn.className = "pay-status-btn status-unpaid";
+            }
+
+            // Render History List
             const listEl = document.getElementById('historyList');
             listEl.innerHTML = '';
             
-            if (thisMonthLogs.length === 0) {
-                listEl.innerHTML = '<li style="color:var(--secondary-text); font-size:0.95rem; text-align:center; padding: 20px 0;">No deliveries logged this month yet.</li>';
+            if (currentLogs.length === 0) {
+                listEl.innerHTML = `<li style="color:var(--secondary-text); font-size:0.95rem; text-align:center; padding: 20px 0;">No deliveries logged this ${settings.cycle === 'weekly' ? 'week' : 'month'} yet.</li>`;
             }
 
-            thisMonthLogs.forEach(log => {
+            currentLogs.forEach(log => {
                 const li = document.createElement('li');
                 li.className = 'history-item';
-                
                 let noteHtml = log.note ? `<div class="history-note">${log.note}</div>` : '';
                 
                 li.innerHTML = `
@@ -414,6 +530,14 @@
                 `;
                 listEl.appendChild(li);
             });
+        }
+
+        function togglePaymentStatus() {
+            const periodInfo = getCurrentPeriodInfo();
+            const currentStatus = paymentRecords[periodInfo.periodKey] || false;
+            paymentRecords[periodInfo.periodKey] = !currentStatus;
+            localStorage.setItem('catering_payments', JSON.stringify(paymentRecords));
+            updateUI();
         }
 
         function logToday() {
@@ -485,9 +609,17 @@
             }
         }
 
+        function toggleStartDayVisibility() {
+            const cycle = document.getElementById('setCycle').value;
+            document.getElementById('startDayGroup').style.display = (cycle === 'weekly') ? 'block' : 'none';
+        }
+
         function openSettings() {
             document.getElementById('setCompany').value = settings.defaultCaterer;
             document.getElementById('setPrice').value = settings.defaultPrice;
+            document.getElementById('setCycle').value = settings.cycle || 'monthly';
+            document.getElementById('setStartDay').value = settings.startDay !== undefined ? settings.startDay : 1;
+            toggleStartDayVisibility();
             document.getElementById('settingsModal').style.display = 'flex';
         }
 
@@ -498,6 +630,8 @@
         function saveSettings() {
             settings.defaultCaterer = document.getElementById('setCompany').value;
             settings.defaultPrice = Number(document.getElementById('setPrice').value);
+            settings.cycle = document.getElementById('setCycle').value;
+            settings.startDay = Number(document.getElementById('setStartDay').value);
             localStorage.setItem('catering_settings', JSON.stringify(settings));
             closeSettings();
             updateUI();
