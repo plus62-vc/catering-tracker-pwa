@@ -391,10 +391,18 @@
         }
 
         function formatDate(dateStr) {
-            const options = { month: 'short', day: '2-digit' };
-            const date = new Date(dateStr);
-            date.setMinutes(date.getMinutes() + date.getTimezoneOffset());
-            return date.toLocaleDateString('en-US', options);
+            if (!dateStr) return '';
+            const parts = dateStr.split('-');
+            if (parts.length === 3) {
+                const date = new Date(parts[0], parts[1] - 1, parts[2]);
+                return date.toLocaleDateString('en-US', { month: 'short', day: '2-digit' });
+            }
+            return dateStr;
+        }
+
+        function parseLocalDate(dateStr) {
+            const parts = dateStr.split('-');
+            return new Date(parts[0], parts[1] - 1, parts[2]);
         }
 
         function getTodayString() {
@@ -407,10 +415,9 @@
 
         function getCustomWeekDetails(dateObj, startDayIndex) {
             const d = new Date(dateObj);
-            d.setMinutes(d.getMinutes() + d.getTimezoneOffset());
             d.setHours(0, 0, 0, 0);
 
-            const currentDay = d.getDay(); // 0 = Sun, 1 = Mon ...
+            const currentDay = d.getDay();
             let diff = currentDay - startDayIndex;
             if (diff < 0) diff += 7;
 
@@ -452,10 +459,13 @@
             const periodInfo = getCurrentPeriodInfo();
             
             document.getElementById('displayPeriod').innerText = periodInfo.periodLabel;
-            document.getElementById('pastDate').value = todayStr;
-            document.getElementById('pastPrice').value = settings.defaultPrice;
+            if (!document.getElementById('pastDate').value) {
+                document.getElementById('pastDate').value = todayStr;
+            }
+            if (!document.getElementById('pastPrice').value) {
+                document.getElementById('pastPrice').value = settings.defaultPrice;
+            }
 
-            // Handle Main Button
             const bigBtn = document.getElementById('mainLogBtn');
             const extraBtn = document.getElementById('extraTodayBtn');
             const hasLoggedToday = logs.some(log => log.date === todayStr);
@@ -470,32 +480,27 @@
                 extraBtn.style.display = "none";
             }
 
-            // Filter Logs for Current Cycle
             let currentLogs = [];
             if (settings.cycle === 'weekly') {
                 currentLogs = logs.filter(log => {
-                    const lDate = new Date(log.date);
-                    lDate.setMinutes(lDate.getMinutes() + lDate.getTimezoneOffset());
+                    const lDate = parseLocalDate(log.date);
                     return lDate >= periodInfo.startDate && lDate <= periodInfo.endDate;
                 });
             } else {
                 const currentMonth = now.getMonth();
                 const currentYear = now.getFullYear();
                 currentLogs = logs.filter(log => {
-                    const lDate = new Date(log.date);
-                    lDate.setMinutes(lDate.getMinutes() + lDate.getTimezoneOffset());
+                    const lDate = parseLocalDate(log.date);
                     return lDate.getMonth() === currentMonth && lDate.getFullYear() === currentYear;
                 });
             }
 
-            currentLogs.sort((a, b) => new Date(b.date) - new Date(a.date));
+            currentLogs.sort((a, b) => parseLocalDate(b.date) - parseLocalDate(a.date));
 
-            // Calculate Totals
             const total = currentLogs.reduce((sum, log) => sum + Number(log.price), 0);
             document.getElementById('displayTotal').innerText = formatCurrency(total);
             document.getElementById('displayCount').innerText = `${currentLogs.length} deliveries this ${settings.cycle === 'weekly' ? 'week' : 'month'}`;
 
-            // Payment Status Button Update
             const isPaid = paymentRecords[periodInfo.periodKey] || false;
             const statusBtn = document.getElementById('payStatusBtn');
             if (isPaid) {
@@ -506,7 +511,6 @@
                 statusBtn.className = "pay-status-btn status-unpaid";
             }
 
-            // Render History List
             const listEl = document.getElementById('historyList');
             listEl.innerHTML = '';
             
